@@ -565,7 +565,6 @@ const storage = {
     localStorage.setItem(key, value);
     if (firebaseOK && db) {
       const fbKey = storage._fbKey(key);
-      console.log('[FB set]', fbKey, '| len:', String(value||'').length);
       try {
         db.ref(fbKey).set(value).catch(e => console.warn('[FB set err]', key, e.message));
       } catch(e) { console.warn('[FB set]', e.message); }
@@ -698,6 +697,13 @@ function initFirebase() {
     _fbListeners['root'] = false;
     firebaseOK = false;
     db = null;
+    // Kiểm tra config đã được điền chưa
+    if (!firebaseConfig.apiKey || firebaseConfig.apiKey.indexOf('DIEN_') === 0) {
+      console.warn('[Firebase] Config chưa được điền – chạy offline');
+      renderPage('dashboard');
+      toast('⚠️ Firebase chưa cấu hình. Mở file index.html bằng Notepad và điền API Key.');
+      return;
+    }
     firebase.initializeApp(firebaseConfig);
     db = firebase.database();
     var auth = firebase.auth();
@@ -793,19 +799,14 @@ function doLogin() {
   document.getElementById('navTonghop').style.display = acc.role === 'dauMoi' ? '' : 'none';
   document.getElementById('navSailenh').style.display = acc.role === 'dauMoi' ? '' : 'none';
 
-  if (firebaseConfig.apiKey && firebaseConfig.apiKey.startsWith('AIzaSy') && !firebaseConfig.apiKey.includes('Demo')) {
-    // Hiện loading trước khi sync
-    document.getElementById('mainContent').innerHTML =
-      '<div style="text-align:center;padding:60px;color:var(--bidv-blue)">'
-      +'<div style="font-size:32px;margin-bottom:12px">⏳</div>'
-      +'<div style="font-weight:600">Đang đồng bộ dữ liệu từ Firebase...</div>'
-      +'<div style="font-size:12px;color:var(--text-light);margin-top:6px">Vui lòng chờ</div>'
-      +'</div>';
-    initFirebase(); // renderPage được gọi bên trong sau khi sync xong
-  } else {
-    toast('ℹ️ Chưa cấu hình Firebase – đang dùng localStorage. Vào ⚙ Cài đặt để kết nối.');
-    renderPage('dashboard');
-  }
+  // Hiện loading trong khi sync Firebase
+  document.getElementById('mainContent').innerHTML =
+    '<div style="text-align:center;padding:60px;color:var(--bidv-blue)">'
+    +'<div style="font-size:32px;margin-bottom:12px">⏳</div>'
+    +'<div style="font-weight:600">Đang đồng bộ dữ liệu...</div>'
+    +'<div style="font-size:12px;color:var(--text-light);margin-top:6px">Vui lòng chờ giây lát</div>'
+    +'</div>';
+  initFirebase();
 }
 
 function showChangeRole() {
@@ -2330,29 +2331,19 @@ function pageSetting() {
   
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
     <div class="card">
-      <div class="card-header"><div class="card-title">🔥 Kết nối Firebase</div></div>
+      <div class="card-header"><div class="card-title">🔥 Trạng thái Firebase</div></div>
       <div class="card-body">
         <div class="alert ${firebaseOK?'alert-success':'alert-warn'}">
           ${firebaseOK
-            ? '✅ Đã kết nối Firebase (Locked mode – Anonymous Auth) · '
-              + Object.keys(_fbListeners).length + ' listener(s) · UID: '
-              + (typeof firebase !== "undefined" && firebase.auth && firebase.auth().currentUser
-                 ? firebase.auth().currentUser.uid.slice(0,8)+'...' : 'n/a')
-            : '⚠️ Chưa kết nối – đang dùng localStorage (chỉ 1 máy/phòng)'}
+            ? '✅ Đã kết nối Firebase – đồng bộ realtime · Project: <strong>' + firebaseConfig.projectId + '</strong>'
+            : '⚠️ Chưa kết nối Firebase – liên hệ quản trị viên để kiểm tra cấu hình.'}
         </div>
-        <div class="form-group">
-          <label class="form-label">API Key <span style="color:var(--bidv-red);font-size:11px">★ Bắt buộc – lấy từ Project Settings</span></label>
-          <input type="text" class="form-control" id="fbApiKey" placeholder="AIzaSy..." value="${firebaseConfig.apiKey&&firebaseConfig.apiKey.startsWith('AIzaSy')?firebaseConfig.apiKey:''}">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Firebase Project ID</label>
-          <input type="text" class="form-control" id="fbProjectId" placeholder="bidv-campha-dubao" value="${firebaseConfig.projectId}">
-        </div>
-        <div class="form-group" style="margin-top:10px">
-          <label class="form-label">Database URL</label>
-          <input type="text" class="form-control" id="fbDbUrl" value="${firebaseConfig.databaseURL}">
-        </div>
-        <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="saveFirebaseConfig()">💾 Lưu & kết nối Firebase</button>
+        ${firebaseOK ? `
+        <div style="font-size:12px;color:var(--text-light);margin-top:8px">
+          <div>🔗 Project: <strong>${firebaseConfig.projectId}</strong></div>
+          <div style="margin-top:4px">🗄️ Database: <strong>${firebaseConfig.databaseURL.replace('https://','').replace('.firebasedatabase.app','')}</strong></div>
+          <div style="margin-top:4px">👤 UID: <strong>${typeof firebase !== "undefined" && firebase.auth && firebase.auth().currentUser ? firebase.auth().currentUser.uid.slice(0,12)+'...' : 'n/a'}</strong></div>
+        </div>` : ''}
       </div>
     </div>
     
@@ -2797,59 +2788,13 @@ function doChangePassword() {
 }
 
 // ─── FIREBASE CONFIG SAVE ───
-function saveFirebaseConfig() {
-  const apiKey    = document.getElementById('fbApiKey').value.trim();
-  const projectId = document.getElementById('fbProjectId').value.trim();
-  const dbUrl     = document.getElementById('fbDbUrl').value.trim();
-  if (!apiKey || !projectId || !dbUrl) {
-    toast('⚠️ Vui lòng nhập đủ API Key, Project ID và Database URL');
-    return;
-  }
-  if (!apiKey.startsWith('AIzaSy')) {
-    toast('⚠️ API Key không hợp lệ – phải bắt đầu bằng AIzaSy...');
-    return;
-  }
+// saveFirebaseConfig removed – config embedded in file
 
-  // Lưu đầy đủ config vào localStorage – tất cả máy dùng chung file sẽ đọc được
-  localStorage.setItem('fb_config', JSON.stringify({
-    apiKey, projectId, databaseURL: dbUrl
-  }));
-
-  if (firebaseOK) {
-    toast('ℹ️ Firebase đã kết nối. Reload trang để áp dụng config mới nếu cần.');
-    return;
-  }
-
-  try {
-    firebaseConfig.apiKey        = apiKey;
-    firebaseConfig.projectId     = projectId;
-    firebaseConfig.databaseURL   = dbUrl;
-    firebaseConfig.authDomain    = projectId + '.firebaseapp.com';
-    firebaseConfig.storageBucket = projectId + '.appspot.com';
-    initFirebase();
-    renderPage('setting');
-  } catch(e) {
-    toast('❌ Lỗi kết nối Firebase: ' + e.message);
-  }
-}
-
-function loadFirebaseConfig() {
-  const saved = JSON.parse(localStorage.getItem('fb_config') || '{}');
-  if (saved.projectId && saved.apiKey) {
-    firebaseConfig.apiKey        = saved.apiKey;
-    firebaseConfig.projectId     = saved.projectId;
-    firebaseConfig.databaseURL   = saved.databaseURL;
-    firebaseConfig.authDomain    = saved.projectId + '.firebaseapp.com';
-    firebaseConfig.storageBucket = saved.projectId + '.appspot.com';
-    firebaseConfig.messagingSenderId = saved.messagingSenderId || '';
-    firebaseConfig.appId         = saved.appId || '';
-  }
-}
+// loadFirebaseConfig removed – config embedded in file
 
 // ─── START ───
 document.addEventListener('DOMContentLoaded', function() {
   loadMPAConfig();       // Nạp MPA config đã lưu
-  loadFirebaseConfig();  // Nạp Firebase config đã lưu (nếu có)
   document.querySelectorAll('.role-card').forEach(c => {
     c.addEventListener('keydown', e => { if(e.key==='Enter') c.click(); });
   });
