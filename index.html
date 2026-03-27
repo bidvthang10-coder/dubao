@@ -478,7 +478,7 @@ tfoot td { background: #eef3fa; font-weight: 700; border-top: 2px solid var(--bi
       <button class="btn btn-outline" onclick="closeModal('modalPushKH')">Huỷ</button>
       <button class="btn btn-gold" onclick="downloadTemplate('hdv')">⬇ Tải mẫu HĐV</button>
       <button class="btn btn-gold" onclick="downloadTemplate('cv')">⬇ Tải mẫu CV</button>
-      <button class="btn btn-primary" onclick="pushDataToPhong()">⬆ Đẩy dữ liệu xuống các Phòng</button>
+      <button class="btn btn-primary" onclick="pushXuongPhong()">⬆ Đẩy dữ liệu xuống các Phòng</button>
     </div>
   </div>
 </div>
@@ -625,10 +625,8 @@ function setupRealtimeListeners() {
   // Các prefix quan trọng cần lắng nghe realtime
   const watchPrefixes = [
     'status_',    // trạng thái gửi/duyệt từng phòng
-    'hdv_',       // dự báo HĐV
-    'cv_',        // dự báo CV
-    'nen_hdv_',   // dữ liệu nền HĐV
-    'nen_cv_',    // dữ liệu nền CV
+    'hdv_',       // HĐV (nền + dự báo)
+    'cv_',        // CV (nền + dự báo)
     'guiTSC_',    // trạng thái gửi TSC
     'sailenh_',   // sai lệch thực tế
   ];
@@ -826,8 +824,8 @@ function renderPage(page) {
   switch(page) {
     case 'dashboard': mc.innerHTML = pageDashboard(); break;
     case 'push': mc.innerHTML = pagePush(); break;
-    case 'nhapHDV': mc.innerHTML = pageNhapHDV(); bindNhapHDV(); break;
-    case 'nhapCV': mc.innerHTML = pageNhapCV(); bindNhapCV(); break;
+    case 'nhapHDV': mc.innerHTML = pageNhapHDV(); break;
+    case 'nhapCV':  mc.innerHTML = pageNhapCV();  break;
     case 'tonghop': mc.innerHTML = pageTonghop(); break;
     case 'sailenh': mc.innerHTML = pageSailenh(); break;
     case 'setting': mc.innerHTML = pageSetting(); break;
@@ -1058,24 +1056,7 @@ function getNenCount(loai) {
   });
   return found;
 }
-function getNenData(loai) {
-  const key = 'nen_' + loai + '_' + getKyKey();
-  // Thử đọc theo phòng (định dạng mới)
-  const phongsList = storage.get(key + '_phongs');
-  if (phongsList) {
-    try {
-      const phongs = JSON.parse(phongsList);
-      var all = [];
-      phongs.forEach(function(p){
-        var d = storage.get(key + '_' + p);
-        if (d) all = all.concat(JSON.parse(d));
-      });
-      return all;
-    } catch(e) {}
-  }
-  // Fallback: đọc key tổng cũ
-  return JSON.parse(storage.get(key) || '[]');
-}
+function getNenData(loai) { return []; } // legacy - dữ liệu nay lưu theo hdv_/cv_ keys
 function xoaNen(loai) {
   // Kiểm tra xem phòng nào đã nhập dự báo
   const daNhap = PHONG_LIST.filter(p => {
@@ -1332,160 +1313,7 @@ function importNenCV(event) {
   reader.readAsArrayBuffer(file);
 }
 
-function importNen(event, loai) {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  // Cảnh báo nếu file quá lớn
-  if (file.size > 20 * 1024 * 1024) {
-    toast('⏳ File lớn (' + (file.size/1024/1024).toFixed(1) + 'MB) – đang xử lý, vui lòng chờ...');
-  }
-
-  const reader = new FileReader();
-  reader.onload = function(e) {
-    try {
-      // ArrayBuffer nhanh hơn BinaryString với file lớn
-      var data = new Uint8Array(e.target.result);
-      var wb = XLSX.read(data, { type: 'array', cellDates: true });
-      var ws = wb.Sheets[wb.SheetNames[0]];
-
-      // Đọc dạng array để kiểm soát header thủ công
-      var aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-      if (!aoa || aoa.length < 2) { toast('⚠️ File không có dữ liệu'); return; }
-
-      // Dòng 0 = header, lọc bỏ cột None/rỗng ở cuối
-      var rawHeaders = aoa[0].map(function(h){ return h == null ? '' : String(h).trim(); });
-      // Tìm các cột có header hợp lệ
-      var validCols = [];
-      rawHeaders.forEach(function(h, i){ if (h !== '') validCols.push({ idx: i, name: h }); });
-
-      var mpaField = loai === 'hdv' ? 'MA_PHONG' : 'Mã phòng ban quản lý tài khoản';
-
-      // Kiểm tra cột bắt buộc
-      var colNames = validCols.map(function(c){ return c.name; });
-      var requiredHDV = ['MA_PHONG','DOITUONG','SDU_KKH','SDU_CKH'];
-      var requiredCV  = ['Mã phòng ban quản lý tài khoản','DOITUONG','KYHAN_VAY','Dư nợ nội bảng (CQĐ)'];
-      var required = loai==='hdv' ? requiredHDV : requiredCV;
-      var missing = required.filter(function(h){ return colNames.indexOf(h) < 0; });
-      if (missing.length > 0) {
-        toast('❌ File thiếu cột bắt buộc: ' + missing.join(', '));
-        return;
-      }
-
-      // Map tên cột → index trong mỗi dòng
-      var colIdx = {};
-      validCols.forEach(function(c){ colIdx[c.name] = c.idx; });
-
-      var numFields = loai === 'hdv'
-        ? ['SDU_KKH','SDU_CKH','SDU_CQD','SDU_DAOHAN']
-        : ['Dư nợ nội bảng (CQĐ)','THAUCHI','VayTT','DAOHAN_TATTOAN','TRANO_THEOLICH'];
-
-      // Chỉ đọc các field thực sự cần, bỏ qua phần còn lại → tiết kiệm RAM
-      var keepFields = loai === 'hdv'
-        ? ['MA_PHONG','DOITUONG','SDU_KKH','SDU_CKH','SDU_CQD','SDU_DAOHAN']
-        : ['Mã phòng ban quản lý tài khoản','DOITUONG','KYHAN_VAY',
-           'Dư nợ nội bảng (CQĐ)','THAUCHI','VayTT','DAOHAN_TATTOAN','TRANO_THEOLICH','Ngày dữ liệu'];
-
-      var cleaned = [];
-      for (var ri = 1; ri < aoa.length; ri++) {
-        var row = aoa[ri];
-        // Bỏ qua dòng trống
-        if (!row || row.every(function(c){ return c === '' || c == null; })) continue;
-
-        // Chỉ lấy field cần thiết
-        var r = {};
-        keepFields.forEach(function(f){
-          if (colIdx[f] !== undefined) r[f] = row[colIdx[f]];
-        });
-
-        // Chuẩn hoá MPA
-        var mpaRaw = r[mpaField];
-        var mpa = (mpaRaw !== undefined && mpaRaw !== '')
-          ? String(Math.round(Number(mpaRaw))) : '';
-        var phong = MPA_TO_MA[mpa] || mpa;
-
-        // Chuẩn hoá ngày
-        var ngay = r['NGAY_DL'] || r['Ngày dữ liệu'] || '';
-        if (ngay instanceof Date) ngay = ngay.toISOString().slice(0,10);
-        else if (typeof ngay === 'number')
-          ngay = new Date(Math.round((ngay-25569)*86400*1000)).toISOString().slice(0,10);
-        else if (ngay) ngay = String(ngay).slice(0,10);
-
-        // Chuẩn hoá số
-        numFields.forEach(function(f){
-          var v = parseFloat(r[f]);
-          r[f] = isNaN(v) ? 0 : v;
-        });
-
-        r.phong  = phong;
-        r._ngay  = ngay;
-        cleaned.push(r);
-      }
-
-      if (cleaned.length === 0) { toast('⚠️ Không đọc được dòng nào từ file'); return; }
-
-      // Tự động gộp theo CIF nếu > 5.000 dòng
-      var rows;
-      if (cleaned.length > 5000) {
-        toast('⚙️ Đang xử lý ' + cleaned.length.toLocaleString() + ' dòng...');
-        rows = aggregateByCIF(cleaned, loai);
-      } else {
-        rows = cleaned;
-      }
-
-      const mapped = rows.reduce((a,r)=>{ a[r.phong]=(a[r.phong]||0)+1; return a; },{});
-      const key = 'nen_' + loai + '_' + getKyKey();
-
-      const existingNen = JSON.parse(storage.get(key) || '[]');
-      if (existingNen.length > 0 && existingNen.length !== rows.length) {
-        const msg = '⚠️ CẢNH BÁO: File mới có ' + rows.length + ' dòng, dữ liệu cũ có ' + existingNen.length + ' dòng.\n'
-          + 'Dữ liệu dự báo đã nhập có thể bị lệch STT. Tiếp tục?';
-        if (!confirm(msg)) return;
-      } else if (existingNen.length > 0 && existingNen.length === rows.length) {
-        if (!confirm('Đã có ' + existingNen.length + ' dòng. Ghi đè? (An toàn vì số dòng không đổi)')) return;
-      }
-
-      // Lọc chỉ giữ KH có số dư > 0 để tiết kiệm storage
-      var beforeFilter = rows.length;
-      if (loai === 'hdv') {
-        rows = rows.filter(function(r){ return (parseFloat(r['SDU_KKH']||0)+parseFloat(r['SDU_CKH']||0)) > 0; });
-      } else {
-        rows = rows.filter(function(r){ return parseFloat(r['Dư nợ nội bảng (CQĐ)']||0) > 0; });
-      }
-      if (beforeFilter !== rows.length) {
-        console.log('[Import] Lọc số dư=0: ' + beforeFilter + ' → ' + rows.length + ' dòng');
-      }
-
-      // Lưu tách biệt theo từng phòng để tránh vượt giới hạn localStorage/Firebase
-      var byPhong = {};
-      rows.forEach(function(r){
-        if (!byPhong[r.phong]) byPhong[r.phong] = [];
-        byPhong[r.phong].push(r);
-      });
-
-      // Xoá key tổng cũ (nếu có) và lưu theo phòng
-      storage.remove(key);
-      Object.keys(byPhong).forEach(function(phongMa){
-        storage.set(key + '_' + phongMa, JSON.stringify(byPhong[phongMa]));
-      });
-      // Lưu danh sách phòng để getNenData biết cần đọc gì
-      storage.set(key + '_phongs', JSON.stringify(Object.keys(byPhong)));
-
-      var unmapped = rows.filter(function(r){ return !PHONG_LIST.find(function(p){ return p.ma===r.phong; }); }).length;
-      if (unmapped > 0) {
-        toast('⚠️ ' + rows.length.toLocaleString() + ' dòng – ' + unmapped + ' dòng chưa map phòng. Kiểm tra Mã MPA ở Cài đặt.');
-      } else {
-        var parts = Object.entries(mapped).map(function(e){ return e[0]+':'+e[1]; }).join(', ');
-        toast('✅ Import ' + rows.length.toLocaleString() + ' nhóm ' + loai.toUpperCase() + ' | ' + parts);
-      }
-      renderPage('push');
-    } catch(err) {
-      toast('❌ Lỗi đọc file: ' + err.message);
-      console.error(err);
-    }
-  };
-  reader.readAsArrayBuffer(file);
-}
+// importNen (old model) removed
 
 // Gộp nhiều tài khoản cùng CIF thành 1 dòng (cộng dồn số dư)
 function aggregateByCIF(rows, loai) {
@@ -1967,7 +1795,7 @@ function getKyDaGui() {
   for (var i = 0; i < localStorage.length; i++) {
     var k = localStorage.key(i);
     // Quét cả kỳ tháng (T01_2026) lẫn kỳ quý (Q1_2026)
-    var m = k.match(new RegExp('^nen_hdv_((T\\d{2}|Q\\d)_\\d{4})$'));
+    var m = k.match(new RegExp('^hdv_((T\\d{2}|Q\\d)_\\d{4})_'));
     if (m) keys.push(m[1]);
   }
   keys = keys.filter(function(v,i,a){ return a.indexOf(v)===i; });
