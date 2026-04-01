@@ -891,7 +891,7 @@ function pageDashboard() {
   </div>
   
   ${currentUser.role === 'dauMoi' ? `<div class="alert alert-info">📌 Bạn đang đăng nhập với quyền <strong>Đầu mối Chi nhánh</strong>. Sau khi push dữ liệu nền, các phòng sẽ thấy danh sách KH để nhập dự báo.</div>` : `<div class="alert alert-info">📌 Đơn vị: <strong>${currentUser.ten}</strong>. Vui lòng nhập dự báo biến động HĐV và CV trong kỳ theo dữ liệu đã được đầu mối chi nhánh gửi xuống.</div>`}
-  ${!firebaseOK ? `<div class="alert alert-warn">⚠️ Chế độ <strong>offline (localStorage)</strong> – Dữ liệu chỉ lưu trên máy này. Mỗi phòng/PGD cần dùng <strong>1 máy cố định</strong> trong suốt kỳ. Không nhập trên nhiều máy cùng lúc vì dữ liệu sẽ không đồng bộ. Để dùng chung nhiều máy: kết nối Firebase tại ⚙️ Cài đặt.</div>` : `<div class="alert alert-success">✅ Đã kết nối Firebase – nhiều máy có thể nhập đồng thời, dữ liệu đồng bộ realtime.</div>`}
+  ${!firebaseOK ? `<div class="alert alert-warn">⚠️ <strong>Chưa kết nối Firebase</strong> – Liên hệ quản trị viên (campha) kiểm tra cấu hình API Key trong file index.html.</div>` : `<div class="alert alert-success">✅ Đã kết nối Firebase – dữ liệu đồng bộ realtime giữa tất cả máy.</div>`}
   
   <div class="stat-row">
     <div class="stat-box">
